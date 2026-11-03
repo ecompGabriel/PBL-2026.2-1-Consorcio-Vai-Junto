@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	tamanhoMaximoMensagem   = 64 * 1024
-	tempoMaximoSemAtividade = 45 * time.Minute
-	tempoMaximoEscrita      = 10 * time.Second
+	tamanhoMaximoMensagem = 64 * 1024
+	tempoMaximoEscrita    = 10 * time.Second
 )
 
 type contextoServidor struct {
@@ -51,8 +50,9 @@ func main() {
 	}
 
 	caminhoSnapshot := fmt.Sprintf("dados/%s.json", cfg.EmpresaID)
+	caminhoUsuarios := fmt.Sprintf("dados/%s_usuarios.json", cfg.EmpresaID)
 	catalogo := store.NovoCatalogoComPersistencia(caminhoSnapshot)
-	usuarios := auth.NovoGerenciadorUsuarios()
+	usuarios := auth.NovoGerenciadorUsuariosComPersistencia(caminhoUsuarios)
 
 	servidorREST := consorcio.NovoServidor(cfg.EmpresaID, catalogo)
 	clienteREST := consorcio.NovoCliente(cfg.Parceiros, nil)
@@ -105,17 +105,12 @@ func tratarConexao(
 	sessao := sessaoConexao{}
 
 	for {
-		err := conexao.SetReadDeadline(time.Now().Add(tempoMaximoSemAtividade))
-		if err != nil {
-			return
-		}
-
 		if !leitor.Scan() {
 			break
 		}
 
 		var requisicao protocol.Requisicao
-		err = protocol.DecodificarEstrito(leitor.Bytes(), &requisicao)
+		err := protocol.DecodificarEstrito(leitor.Bytes(), &requisicao)
 		if err != nil {
 			enviarResposta(conexao, respostaErro("", "mensagem_invalida", "requisição JSON inválida"))
 			continue
@@ -173,7 +168,7 @@ func tratarRequisicao(
 		if sessao.Perfil != protocol.PerfilMotorista {
 			return respostaErro(requisicao.ID, "perfil_nao_autorizado", "operação exclusiva do motorista")
 		}
-		return tratarCancelarCarona(requisicao, ctxSrv.catalogo, sessao.UsuarioID)
+		return tratarCancelarCarona(requisicao, ctxSrv, sessao.UsuarioID)
 
 	case "buscar_itinerarios":
 		if sessao.Perfil != protocol.PerfilPassageiro {
@@ -197,7 +192,7 @@ func tratarRequisicao(
 		if sessao.Perfil != protocol.PerfilPassageiro {
 			return respostaErro(requisicao.ID, "perfil_nao_autorizado", "operação exclusiva do passageiro")
 		}
-		return tratarCancelarReserva(requisicao, ctxSrv.catalogo, sessao.UsuarioID)
+		return tratarCancelarReserva(requisicao, ctxSrv, sessao.UsuarioID)
 
 	default:
 		return respostaErro(requisicao.ID, "operacao_desconhecida", "operação desconhecida")
@@ -344,7 +339,7 @@ func tratarListarCaronasMotorista(
 
 func tratarCancelarCarona(
 	requisicao protocol.Requisicao,
-	catalogo *store.CatalogoCaronas,
+	ctxSrv *contextoServidor,
 	motoristaID string,
 ) protocol.Resposta {
 	var dados protocol.CancelarCarona
@@ -353,9 +348,13 @@ func tratarCancelarCarona(
 		return respostaErro(requisicao.ID, "dados_invalidos", "dados do cancelamento inválidos")
 	}
 
-	err = catalogo.CancelarCarona(dados.IDCarona, motoristaID)
+	reservasAfetadas, err := ctxSrv.catalogo.CancelarCaronaComReservas(dados.IDCarona, motoristaID)
 	if err != nil {
 		return respostaErro(requisicao.ID, "cancelamento_recusado", err.Error())
+	}
+
+	for _, r := range reservasAfetadas {
+		ctxSrv.coordenador.PropagarCancelamento(context.Background(), r.ID, r.Trechos())
 	}
 
 	return respostaSucesso(requisicao.ID, "carona cancelada com sucesso", nil)
@@ -517,7 +516,7 @@ func tratarConsultarReservas(
 
 func tratarCancelarReserva(
 	requisicao protocol.Requisicao,
-	catalogo *store.CatalogoCaronas,
+	ctxSrv *contextoServidor,
 	passageiroID string,
 ) protocol.Resposta {
 	var dados protocol.CancelarReserva
@@ -526,10 +525,17 @@ func tratarCancelarReserva(
 		return respostaErro(requisicao.ID, "dados_invalidos", "dados do cancelamento inválidos")
 	}
 
-	err = catalogo.CancelarReserva(dados.IDReserva, passageiroID)
+	reserva, existe := ctxSrv.catalogo.BuscarReservaPorID(dados.IDReserva)
+	if !existe {
+		return respostaErro(requisicao.ID, "cancelamento_recusado", "reserva não encontrada")
+	}
+
+	err = ctxSrv.catalogo.CancelarReserva(dados.IDReserva, passageiroID)
 	if err != nil {
 		return respostaErro(requisicao.ID, "cancelamento_recusado", err.Error())
 	}
+
+	ctxSrv.coordenador.PropagarCancelamento(context.Background(), dados.IDReserva, reserva.Trechos())
 
 	return respostaSucesso(requisicao.ID, "reserva cancelada com sucesso", nil)
 }

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 )
@@ -113,5 +114,37 @@ func (reserva *Reserva) Cancelar() error {
 	}
 
 	reserva.Status = StatusReservaCancelada
+	return nil
+}
+
+// Estrutura auxiliar para serialização e recuperação completa de snapshot em JSON
+type reservaJSON struct {
+	ID                 string             `json:"id"`
+	PassageiroID       string             `json:"passageiro_id"`
+	QuantidadeAssentos int                `json:"quantidade_assentos"`
+	Status             StatusReserva      `json:"status"`
+	Trechos            []ReferenciaTrecho `json:"trechos"`
+}
+
+func (r Reserva) MarshalJSON() ([]byte, error) {
+	return json.Marshal(reservaJSON{
+		ID:                 r.ID,
+		PassageiroID:       r.PassageiroID,
+		QuantidadeAssentos: r.QuantidadeAssentos,
+		Status:             r.Status,
+		Trechos:            r.trechos,
+	})
+}
+
+func (r *Reserva) UnmarshalJSON(data []byte) error {
+	var aux reservaJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.ID = aux.ID
+	r.PassageiroID = aux.PassageiroID
+	r.QuantidadeAssentos = aux.QuantidadeAssentos
+	r.Status = aux.Status
+	r.trechos = aux.Trechos
 	return nil
 }

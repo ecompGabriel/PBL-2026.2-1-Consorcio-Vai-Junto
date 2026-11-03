@@ -123,7 +123,7 @@ func buscarCaminhos(
 		limiteSaida := horarioDisponivel
 		if len(caminhoAtual) > 0 {
 			ultimoTrecho := caminhoAtual[len(caminhoAtual)-1]
-			if ultimoTrecho.CaronaID != trecho.CaronaID {
+			if ultimoTrecho.EmpresaID != trecho.EmpresaID || ultimoTrecho.CaronaID != trecho.CaronaID {
 				limiteSaida = limiteSaida.Add(tempoMinimoConexao)
 			}
 		}

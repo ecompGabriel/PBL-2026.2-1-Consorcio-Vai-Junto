@@ -111,22 +111,19 @@ func (c *CoordenadorTransacao) ReservarItinerario(
 	}
 
 	// Todos os participantes aprovaram: efetiva o commit em todos os nós
-	var ultimaReserva *domain.Reserva
 	for _, empID := range empresasOrdenadas {
 		if empID == c.minhaEmpresaID {
-			res, err := c.catalogo.ConfirmarTransacao(idReserva)
-			if err == nil {
-				ultimaReserva = res
-			}
+			_, _ = c.catalogo.ConfirmarTransacao(idReserva)
 		} else {
 			_ = c.enviarCommitRemoto(ctx, empID, idReserva)
 		}
 	}
 
-	if ultimaReserva == nil {
-		// Cria a representação da reserva confirmada para o cliente local
-		ultimaReserva, _ = domain.NovaReserva(idReserva, passageiroID, quantidadeAssentos, trechos)
-	}
+	// Cria a representação completa da reserva confirmada (com todos os trechos do itinerário) para o coordenador
+	ultimaReserva, _ := domain.NovaReserva(idReserva, passageiroID, quantidadeAssentos, trechos)
+
+	// Garante que o coordenador armazena a reserva completa para que o passageiro local possa consultá-la
+	c.catalogo.SalvarReservaRegistrada(ultimaReserva)
 
 	return ultimaReserva, nil
 }
@@ -244,4 +241,22 @@ func (c *CoordenadorTransacao) enviarAbortRemoto(ctx context.Context, empresaID 
 	defer resp.Body.Close()
 
 	return nil
+}
+
+// PropagarCancelamento notifica as empresas participantes para cancelarem uma reserva confirmada e liberarem assentos
+func (c *CoordenadorTransacao) PropagarCancelamento(ctx context.Context, idReserva string, trechos []domain.ReferenciaTrecho) {
+	empresasNotificadas := make(map[string]bool)
+	for _, ref := range trechos {
+		if ref.EmpresaID != "" && ref.EmpresaID != c.minhaEmpresaID && !empresasNotificadas[ref.EmpresaID] {
+			empresasNotificadas[ref.EmpresaID] = true
+			_ = c.enviarAbortRemoto(ctx, ref.EmpresaID, idReserva)
+		}
+	}
+	// Notifica tambem todas as parceiras configuradas para garantir que qualquer no com a reserva sincronize
+	for empID := range c.parceiros {
+		if !empresasNotificadas[empID] {
+			empresasNotificadas[empID] = true
+			_ = c.enviarAbortRemoto(ctx, empID, idReserva)
+		}
+	}
 }

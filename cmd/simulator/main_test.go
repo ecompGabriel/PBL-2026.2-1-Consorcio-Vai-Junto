@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync/atomic"
 	"testing"
 )
 
@@ -22,9 +23,9 @@ func TestSimuladorComprovandoAusenciaDeOverbooking(t *testing.T) {
 
 func TestSimuladorComInjecaoDeFalhas(t *testing.T) {
 	// Cenário com passageiros concorrentes e injeção de falhas
-	falhasInjetadas := 0
+	var falhasInjetadas int64
 	metricas := ExecutarCenarioCarga(20, func(empresaID string) {
-		falhasInjetadas++
+		atomic.AddInt64(&falhasInjetadas, 1)
 	})
 
 	// Garante que o total de requisições foi contabilizado e o sistema não travou em deadlock
@@ -38,5 +39,5 @@ func TestSimuladorComInjecaoDeFalhas(t *testing.T) {
 	}
 
 	t.Logf("Simulação com falhas: %d quedas de rede injetadas na Empresa B! %d confirmados, %d abortados com segurança.",
-		falhasInjetadas, metricas.Sucessos, metricas.FalhasOuAbortos)
+		atomic.LoadInt64(&falhasInjetadas), metricas.Sucessos, metricas.FalhasOuAbortos)
 }

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -231,4 +232,42 @@ func NovaCarona(
 		rota:    append([]string(nil), rota...),
 		trechos: trechos,
 	}, nil
+}
+
+// Estrutura auxiliar para serialização e recuperação completa de snapshot em JSON
+type caronaJSON struct {
+	ID           string    `json:"id"`
+	EmpresaID    string    `json:"empresa_id"`
+	MotoristaID  string    `json:"motorista_id"`
+	HorarioSaida time.Time `json:"horario_saida"`
+	Rota         []string  `json:"rota"`
+	Trechos      []Trecho  `json:"trechos"`
+	Cancelada    bool      `json:"cancelada"`
+}
+
+func (c Carona) MarshalJSON() ([]byte, error) {
+	return json.Marshal(caronaJSON{
+		ID:           c.ID,
+		EmpresaID:    c.empresaID,
+		MotoristaID:  c.motoristaID,
+		HorarioSaida: c.horarioSaida,
+		Rota:         c.rota,
+		Trechos:      c.trechos,
+		Cancelada:    c.cancelada,
+	})
+}
+
+func (c *Carona) UnmarshalJSON(data []byte) error {
+	var aux caronaJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.ID = aux.ID
+	c.empresaID = aux.EmpresaID
+	c.motoristaID = aux.MotoristaID
+	c.horarioSaida = aux.HorarioSaida
+	c.rota = aux.Rota
+	c.trechos = aux.Trechos
+	c.cancelada = aux.Cancelada
+	return nil
 }

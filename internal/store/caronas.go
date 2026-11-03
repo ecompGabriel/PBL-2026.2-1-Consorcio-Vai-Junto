@@ -250,31 +250,44 @@ func (catalogo *CatalogoCaronas) ConfirmarTransacao(idReserva string) (*domain.R
 	return reserva, nil
 }
 
-// CancelarTransacao executa o ABORT da Fase 2 do 2PC (devolve os assentos)
+func pertenceACarona(ref domain.ReferenciaTrecho, carona *domain.Carona) bool {
+	return carona != nil && ref.CaronaID == carona.ID && (ref.EmpresaID == "" || ref.EmpresaID == carona.EmpresaID())
+}
+
+// CancelarTransacao executa o cancelamento/abort de uma reserva (preparada ou confirmada) e devolve os assentos
 func (catalogo *CatalogoCaronas) CancelarTransacao(idReserva string) error {
 	catalogo.mu.Lock()
 	defer catalogo.mu.Unlock()
 
-	prep, existe := catalogo.preparadas[idReserva]
-	if !existe {
-		// Se nao existe mais na preparacao, pode ja ter sido abortada ou expirada (idempotente)
-		return nil
-	}
-
-	if prep.Cancelado {
-		return nil
-	}
-
-	prep.Cancelado = true
-	reserva := prep.Reserva
-
-	for _, ref := range reserva.Trechos() {
-		if carona, ok := catalogo.caronas[ref.CaronaID]; ok {
-			_ = carona.CancelarNoTrecho(ref.Ordem, reserva.QuantidadeAssentos)
+	// 1. Se estiver na fase de preparacao (Fase 1 do 2PC)
+	if prep, existe := catalogo.preparadas[idReserva]; existe {
+		if !prep.Cancelado {
+			prep.Cancelado = true
+			reserva := prep.Reserva
+			for _, ref := range reserva.Trechos() {
+				if carona, ok := catalogo.caronas[ref.CaronaID]; ok && pertenceACarona(ref, carona) {
+					_ = carona.CancelarNoTrecho(ref.Ordem, reserva.QuantidadeAssentos)
+				}
+			}
+			delete(catalogo.preparadas, idReserva)
 		}
+		return nil
 	}
 
-	delete(catalogo.preparadas, idReserva)
+	// 2. Se ja for uma reserva confirmada (cancelamento distribuido)
+	if reserva, existe := catalogo.reservas[idReserva]; existe {
+		if reserva.EstaConfirmada() {
+			for _, ref := range reserva.Trechos() {
+				if carona, ok := catalogo.caronas[ref.CaronaID]; ok && pertenceACarona(ref, carona) {
+					_ = carona.CancelarNoTrecho(ref.Ordem, reserva.QuantidadeAssentos)
+				}
+			}
+			_ = reserva.Cancelar()
+			_ = catalogo.salvarNoDisco()
+		}
+		return nil
+	}
+
 	return nil
 }
 
@@ -290,6 +303,14 @@ func (catalogo *CatalogoCaronas) ConfirmarReserva(
 		return nil, err
 	}
 	return catalogo.ConfirmarTransacao(idReserva)
+}
+
+// SalvarReservaRegistrada armazena no catalogo da empresa coordenadora uma reserva confirmada
+func (catalogo *CatalogoCaronas) SalvarReservaRegistrada(reserva *domain.Reserva) {
+	catalogo.mu.Lock()
+	defer catalogo.mu.Unlock()
+	catalogo.reservas[reserva.ID] = reserva
+	_ = catalogo.salvarNoDisco()
 }
 
 func (catalogo *CatalogoCaronas) BuscarReservaPorID(id string) (*domain.Reserva, bool) {
@@ -348,7 +369,7 @@ func (catalogo *CatalogoCaronas) ListarCaronasDoMotorista(motoristaID string) []
 				}
 
 				for _, ref := range reserva.Trechos() {
-					if ref.CaronaID == carona.ID && ref.Ordem == trecho.Ordem {
+					if pertenceACarona(ref, carona) && ref.Ordem == trecho.Ordem {
 						situacaoTrecho.Passageiros = append(
 							situacaoTrecho.Passageiros,
 							PassageiroNoTrecho{
@@ -394,7 +415,7 @@ func (catalogo *CatalogoCaronas) CancelarReserva(idReserva string, passageiroID 
 
 	for _, ref := range reserva.Trechos() {
 		carona, encontrada := catalogo.caronas[ref.CaronaID]
-		if encontrada {
+		if encontrada && pertenceACarona(ref, carona) {
 			_ = carona.CancelarNoTrecho(ref.Ordem, reserva.QuantidadeAssentos)
 		}
 	}
@@ -405,20 +426,26 @@ func (catalogo *CatalogoCaronas) CancelarReserva(idReserva string, passageiroID 
 }
 
 func (catalogo *CatalogoCaronas) CancelarCarona(idCarona string, motoristaID string) error {
+	_, err := catalogo.CancelarCaronaComReservas(idCarona, motoristaID)
+	return err
+}
+
+func (catalogo *CatalogoCaronas) CancelarCaronaComReservas(idCarona string, motoristaID string) ([]domain.Reserva, error) {
 	catalogo.mu.Lock()
 	defer catalogo.mu.Unlock()
 
 	carona, existe := catalogo.caronas[idCarona]
 	if !existe {
-		return errors.New("carona não encontrada")
+		return nil, errors.New("carona não encontrada")
 	}
 	if carona.MotoristaID() != motoristaID {
-		return errors.New("a carona não pertence ao motorista informado")
+		return nil, errors.New("a carona não pertence ao motorista informado")
 	}
 	if !carona.EstaAtiva() {
-		return errors.New("a carona já está cancelada")
+		return nil, errors.New("a carona já está cancelada")
 	}
 
+	var reservasAfetadas []domain.Reserva
 	for _, reserva := range catalogo.reservas {
 		if !reserva.EstaConfirmada() {
 			continue
@@ -426,7 +453,7 @@ func (catalogo *CatalogoCaronas) CancelarCarona(idCarona string, motoristaID str
 
 		afetada := false
 		for _, ref := range reserva.Trechos() {
-			if ref.CaronaID == idCarona {
+			if pertenceACarona(ref, carona) {
 				afetada = true
 				break
 			}
@@ -436,16 +463,17 @@ func (catalogo *CatalogoCaronas) CancelarCarona(idCarona string, motoristaID str
 		}
 
 		for _, ref := range reserva.Trechos() {
-			if c, ok := catalogo.caronas[ref.CaronaID]; ok {
+			if c, ok := catalogo.caronas[ref.CaronaID]; ok && pertenceACarona(ref, c) {
 				_ = c.CancelarNoTrecho(ref.Ordem, reserva.QuantidadeAssentos)
 			}
 		}
 		_ = reserva.Cancelar()
+		reservasAfetadas = append(reservasAfetadas, *reserva)
 	}
 
 	err := carona.Cancelar()
 	_ = catalogo.salvarNoDisco()
-	return err
+	return reservasAfetadas, err
 }
 
 func (catalogo *CatalogoCaronas) limparPreparadasExpiradas() {

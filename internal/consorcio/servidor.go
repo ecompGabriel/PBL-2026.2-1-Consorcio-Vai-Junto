@@ -113,13 +113,13 @@ func (s *ServidorConsorcio) tratarTransacaoAcao(w http.ResponseWriter, r *http.R
 
 	// Extrai ID e acao da URL: /api/v1/transacoes/{id}/{acao}
 	partes := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(partes) != 4 {
+	if len(partes) != 5 {
 		http.NotFound(w, r)
 		return
 	}
 
-	idTransacao := partes[2]
-	acao := partes[3]
+	idTransacao := partes[3]
+	acao := partes[4]
 
 	w.Header().Set("Content-Type", "application/json")
 

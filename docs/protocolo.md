@@ -6,9 +6,8 @@
 - codificação: JSON em UTF-8;
 - enquadramento: uma mensagem JSON por linha, terminada por `\n`;
 - tamanho máximo: 64 KiB por mensagem;
-- timeout de inatividade no servidor: 10 minutos;
 - timeout de escrita: 10 segundos;
-- duração da sessão: uma conexão TCP.
+- duração da sessão: uma conexão TCP (sem desconexão por inatividade).
 
 TCP é um fluxo de bytes, não uma sequência de mensagens. O delimitador de linha
 permite reconstruir mensagens mesmo quando uma leitura recebe dados parciais ou
