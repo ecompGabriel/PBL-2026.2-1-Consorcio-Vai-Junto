@@ -1,0 +1,46 @@
+services:
+  empresa-a:
+    build: .
+    container_name: empresa-a
+    environment:
+      - VAIJUNTO_EMPRESA_ID=empresa-a
+      - VAIJUNTO_TCP_LISTEN=:3080
+      - VAIJUNTO_REST_LISTEN=:3090
+      - VAIJUNTO_PARCEIROS=empresa-b=http://empresa-b:3090,empresa-c=http://empresa-c:3090
+    ports:
+      - "3081:3080"
+      - "3091:3090"
+    networks:
+      - consorcio-net
+
+  empresa-b:
+    build: .
+    container_name: empresa-b
+    environment:
+      - VAIJUNTO_EMPRESA_ID=empresa-b
+      - VAIJUNTO_TCP_LISTEN=:3080
+      - VAIJUNTO_REST_LISTEN=:3090
+      - VAIJUNTO_PARCEIROS=empresa-a=http://empresa-a:3090,empresa-c=http://empresa-c:3090
+    ports:
+      - "3082:3080"
+      - "3092:3090"
+    networks:
+      - consorcio-net
+
+  empresa-c:
+    build: .
+    container_name: empresa-c
+    environment:
+      - VAIJUNTO_EMPRESA_ID=empresa-c
+      - VAIJUNTO_TCP_LISTEN=:3080
+      - VAIJUNTO_REST_LISTEN=:3090
+      - VAIJUNTO_PARCEIROS=empresa-a=http://empresa-a:3090,empresa-b=http://empresa-b:3090
+    ports:
+      - "3083:3080"
+      - "3093:3090"
+    networks:
+      - consorcio-net
+
+networks:
+  consorcio-net:
+    driver: bridge
